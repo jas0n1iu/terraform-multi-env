@@ -1,0 +1,57 @@
+# Terraform Drift Detection - 定期检测配置漂移
+name: Terraform Drift Detection
+
+on:
+  schedule:
+    # 每天早上 9 点运行
+    - cron: '0 9 * * *'
+  workflow_dispatch:  # 允许手动触发
+
+env:
+  TF_VERSION: '1.5.0'
+
+jobs:
+  drift-detection:
+    name: 检测配置漂移
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: [dev, staging, prod]
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: 配置 AWS 凭证
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      
+      - name: 安装 Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      
+      - name: Terraform Init
+        working-directory: environments/${{ matrix.environment }}
+        run: terraform init
+      
+      - name: Terraform Plan (检测漂移)
+        id: plan
+        working-directory: environments/${{ matrix.environment }}
+        run: |
+          terraform plan -detailed-exitcode -no-color || echo "drift_detected=true" >> $GITHUB_OUTPUT
+        continue-on-error: true
+      
+      - name: 发送漂移警告
+        if: steps.plan.outputs.drift_detected == 'true'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `⚠️ 配置漂移检测: ${{ matrix.environment }} 环境`,
+              body: `检测到 ${{ matrix.environment }} 环境存在配置漂移。\n\n请检查是否有手动变更未通过 Terraform 管理。`,
+              labels: ['terraform', 'drift', '${{ matrix.environment }}']
+            });

@@ -1,0 +1,173 @@
+# Terraform Apply - 合并到 main 后自动执行
+name: Terraform Apply
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'environments/**'
+      - 'modules/**'
+  # 允许手动触发
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: '选择要部署的环境'
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+env:
+  TF_VERSION: '1.5.0'
+
+jobs:
+  detect-changes:
+    name: 检测变更的环境
+    runs-on: ubuntu-latest
+    outputs:
+      dev: ${{ steps.filter.outputs.dev }}
+      staging: ${{ steps.filter.outputs.staging }}
+      prod: ${{ steps.filter.outputs.prod }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 2
+      
+      - uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            dev:
+              - 'environments/dev/**'
+              - 'modules/**'
+            staging:
+              - 'environments/staging/**'
+              - 'modules/**'
+            prod:
+              - 'environments/prod/**'
+              - 'modules/**'
+
+  # 安全检查：确保不是初始提交
+  safety-check:
+    name: 安全检查
+    runs-on: ubuntu-latest
+    outputs:
+      is_safe: ${{ steps.check.outputs.is_safe }}
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 2
+      
+      - name: 检查是否为初始提交
+        id: check
+        run: |
+          # 检查是否有父提交
+          if git rev-parse HEAD~1 >/dev/null 2>&1; then
+            echo "is_safe=true" >> $GITHUB_OUTPUT
+            echo "✅ 正常的代码变更，可以继续部署"
+          else
+            echo "is_safe=false" >> $GITHUB_OUTPUT
+            echo "⚠️ 检测到初始提交，跳过自动部署"
+            echo "::warning::这是初始提交，建议先通过 PR 流程审查代码"
+          fi
+
+  apply-dev:
+    name: Apply Dev 环境
+    needs: [detect-changes, safety-check]
+    if: needs.detect-changes.outputs.dev == 'true' && needs.safety-check.outputs.is_safe == 'true'
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: 配置 AWS 凭证
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      
+      - name: 安装 Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      
+      - name: Terraform Init
+        working-directory: environments/dev
+        run: terraform init
+      
+      - name: Terraform Apply
+        working-directory: environments/dev
+        run: terraform apply -auto-approve
+      
+      - name: 发送通知
+        if: always()
+        run: |
+          echo "Dev 环境部署完成"
+
+  apply-staging:
+    name: Apply Staging 环境
+    needs: [detect-changes, safety-check, apply-dev]
+    if: needs.detect-changes.outputs.staging == 'true' && needs.safety-check.outputs.is_safe == 'true'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: 配置 AWS 凭证
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      
+      - name: 安装 Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      
+      - name: Terraform Init
+        working-directory: environments/staging
+        run: terraform init
+      
+      - name: Terraform Apply
+        working-directory: environments/staging
+        run: terraform apply -auto-approve
+
+  apply-prod:
+    name: Apply Production 环境
+    needs: [detect-changes, safety-check, apply-staging]
+    if: needs.detect-changes.outputs.prod == 'true' && needs.safety-check.outputs.is_safe == 'true'
+    runs-on: ubuntu-latest
+    environment: 
+      name: production
+      url: https://prod.example.com
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: 配置 AWS 凭证
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
+          aws-region: us-east-1
+      
+      - name: 安装 Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      
+      - name: Terraform Init
+        working-directory: environments/prod
+        run: terraform init
+      
+      - name: Terraform Apply
+        working-directory: environments/prod
+        run: terraform apply -auto-approve
+      
+      - name: 🎉 Production 部署成功
+        run: |
+          echo "::notice::Production 环境已成功部署！"

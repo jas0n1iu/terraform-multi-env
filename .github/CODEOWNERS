@@ -1,0 +1,23 @@
+# CODEOWNERS 文件定义代码审查责任人
+# 详细文档: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# 全局默认所有者（所有文件都需要他们审批）
+# * @your-org/platform-team
+
+# 生产环境配置需要高级工程师审批
+/environments/prod/ @your-org/senior-engineers
+
+# Staging 环境需要 QA 团队审批
+/environments/staging/ @your-org/qa-team
+
+# 模块变更需要架构师审批（影响所有环境）
+/modules/ @your-org/architects
+
+# CI/CD 工作流需要 DevOps 团队审批
+/.github/workflows/ @your-org/devops
+
+# 文档可以由任何人审批
+/docs/ @your-org/platform-team
+
+# 脚本需要 DevOps 审批
+/scripts/ @your-org/devops
